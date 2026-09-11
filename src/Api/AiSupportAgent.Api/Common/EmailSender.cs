@@ -1,0 +1,35 @@
+using Microsoft.Extensions.Options;
+
+namespace AiSupportAgent.Api.Common;
+
+public class EmailOptions
+{
+    public string? ApiKey { get; set; }
+    public string FromEmail { get; set; } = "onboarding@resend.dev";
+    public string? OverrideRecipient { get; set; }
+}
+
+public interface IEmailSender
+{
+    Task SendAsync(string to, string subject, string html, CancellationToken ct);
+}
+
+public class ResendEmailSender(IHttpClientFactory httpFactory, IOptions<EmailOptions> opts, ILogger<ResendEmailSender> log) : IEmailSender
+{
+    public async Task SendAsync(string to, string subject, string html, CancellationToken ct)
+    {
+        var key = opts.Value.ApiKey;
+        if (string.IsNullOrWhiteSpace(key)) { log.LogWarning("Resend not configured; skipping email to {To}.", to); return; }
+
+        var recipient = string.IsNullOrWhiteSpace(opts.Value.OverrideRecipient) ? to : opts.Value.OverrideRecipient;
+        var http = httpFactory.CreateClient();
+        var req = new HttpRequestMessage(HttpMethod.Post, "https://api.resend.com/emails")
+        {
+            Content = JsonContent.Create(new { from = opts.Value.FromEmail, to = recipient, subject, html })
+        };
+        req.Headers.Add("Authorization", $"Bearer {key}");
+        var resp = await http.SendAsync(req, ct);
+        if (!resp.IsSuccessStatusCode)
+            log.LogError("Resend failed ({Status}): {Body}", resp.StatusCode, await resp.Content.ReadAsStringAsync(ct));
+    }
+}
