@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.identity.router import router as identity_router
+from app.tenancy.router import router as tenancy_router
 
 
 def create_app() -> FastAPI:
@@ -16,7 +17,7 @@ def create_app() -> FastAPI:
     register_middleware(application)
     register_exception_handlers(application)
     application.include_router(identity_router)
-
+    application.include_router(tenancy_router)
     @application.get("/health", tags=["Health"])
     async def health_check() -> dict[str, str]:
         return {"status": "ok"}

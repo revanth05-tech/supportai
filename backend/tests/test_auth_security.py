@@ -207,3 +207,27 @@ def test_auth_routes_are_registered_and_me_requires_bearer_token() -> None:
     response = TestClient(app).get("/api/auth/me")
 
     assert response.status_code == 401
+    
+def test_agent_and_llm_routes_are_registered_and_protected() -> None:
+    paths = _collect_paths(app.routes)
+
+    assert {
+        "/api/agent",
+        "/api/agent/rotate-site-key",
+        "/api/agent/llm",
+    } <= paths
+
+    client = TestClient(app)
+
+    assert client.get("/api/agent").status_code == 401
+    assert client.get("/api/agent/llm").status_code == 401
+
+    assert client.put(
+        "/api/agent/llm",
+        json={
+            "provider": "OpenRouter",
+            "api_key": "test-secret",
+        },
+    ).status_code == 401
+
+    assert client.delete("/api/agent/llm").status_code == 401

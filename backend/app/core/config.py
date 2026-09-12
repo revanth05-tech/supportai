@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = Field(default=15, validation_alias="ACCESS_TOKEN_EXPIRE_MINUTES")
     refresh_token_expire_days: int = Field(default=30, validation_alias="REFRESH_TOKEN_EXPIRE_DAYS")
     frontend_url: str = Field(default="http://localhost:3000", validation_alias="FRONTEND_URL")
+    data_protection_key: str | None = Field(
+    default=None,
+    validation_alias="DATA_PROTECTION_KEY",
+)
 
 
 @lru_cache
