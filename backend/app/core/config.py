@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     environment: str = Field(default="development", validation_alias="ENVIRONMENT")
     debug: bool = Field(default=False, validation_alias="DEBUG")
     database_url: str = Field(
-        default="postgresql+asyncpg://postgres:postgres@localhost:5432/supportai",
+        default="postgresql+asyncpg://localhost/supportai",
         validation_alias="DATABASE_URL",
     )
     jwt_secret_key: str | None = Field(default=None, validation_alias="JWT_SECRET_KEY")

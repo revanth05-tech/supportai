@@ -10,6 +10,12 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.config import settings
 from app.db.base import Base
+# Import every model module before exposing metadata to Alembic.
+import app.conversations.models  # noqa: F401, E402
+import app.identity.models  # noqa: F401, E402
+import app.knowledge.models  # noqa: F401, E402
+import app.leads.models  # noqa: F401, E402
+import app.tenancy.models  # noqa: F401, E402
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)
