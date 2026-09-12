@@ -8,7 +8,7 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.identity.router import router as identity_router
 from app.tenancy.router import router as tenancy_router
-
+from app.knowledge.router import router as knowledge_router
 
 def create_app() -> FastAPI:
     """Create the application without importing domain implementations."""
@@ -18,6 +18,7 @@ def create_app() -> FastAPI:
     register_exception_handlers(application)
     application.include_router(identity_router)
     application.include_router(tenancy_router)
+    application.include_router(knowledge_router)
     @application.get("/health", tags=["Health"])
     async def health_check() -> dict[str, str]:
         return {"status": "ok"}
