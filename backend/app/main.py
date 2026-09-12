@@ -1,0 +1,25 @@
+"""FastAPI application entry point."""
+
+from fastapi import FastAPI
+
+from app.common.middleware import register_middleware
+from app.core.config import settings
+from app.core.errors import register_exception_handlers
+from app.core.logging import configure_logging
+
+
+def create_app() -> FastAPI:
+    """Create the application without importing domain implementations."""
+    configure_logging(settings)
+    application = FastAPI(title=settings.app_name, debug=settings.debug)
+    register_middleware(application)
+    register_exception_handlers(application)
+
+    @application.get("/health", tags=["Health"])
+    async def health_check() -> dict[str, str]:
+        return {"status": "ok"}
+
+    return application
+
+
+app = create_app()
