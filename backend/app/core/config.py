@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     )
     jwt_secret_key: str | None = Field(default=None, validation_alias="JWT_SECRET_KEY")
     jwt_algorithm: str = Field(default="HS256", validation_alias="JWT_ALGORITHM")
+    jwt_issuer: str = Field(default="ai-support-agent-api", validation_alias="JWT_ISSUER")
+    jwt_audience: str = Field(default="ai-support-agent-client", validation_alias="JWT_AUDIENCE")
     access_token_expire_minutes: int = Field(default=15, validation_alias="ACCESS_TOKEN_EXPIRE_MINUTES")
     refresh_token_expire_days: int = Field(default=30, validation_alias="REFRESH_TOKEN_EXPIRE_DAYS")
     frontend_url: str = Field(default="http://localhost:3000", validation_alias="FRONTEND_URL")

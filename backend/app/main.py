@@ -6,6 +6,7 @@ from app.common.middleware import register_middleware
 from app.core.config import settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
+from app.identity.router import router as identity_router
 
 
 def create_app() -> FastAPI:
@@ -14,6 +15,7 @@ def create_app() -> FastAPI:
     application = FastAPI(title=settings.app_name, debug=settings.debug)
     register_middleware(application)
     register_exception_handlers(application)
+    application.include_router(identity_router)
 
     @application.get("/health", tags=["Health"])
     async def health_check() -> dict[str, str]:

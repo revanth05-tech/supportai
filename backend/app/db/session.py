@@ -3,6 +3,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import settings
+import app.db.tenant_isolation  # noqa: F401, E402
 
 
 engine = create_async_engine(settings.database_url, pool_pre_ping=True)
