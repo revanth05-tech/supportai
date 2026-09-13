@@ -14,3 +14,11 @@ def encode_sse(data: Any, *, event: str | None = None) -> str:
 async def single_sse_event(data: Any, *, event: str | None = None) -> AsyncIterator[str]:
     """Minimal async generator compatible with StreamingResponse."""
     yield encode_sse(data, event=event)
+
+async def stream_sse_events(
+    events: AsyncIterator[tuple[str, Any]],
+) -> AsyncIterator[str]:
+    """Convert an async event stream into SSE messages."""
+
+    async for event, data in events:
+        yield encode_sse(data, event=event)
