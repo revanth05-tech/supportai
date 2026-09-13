@@ -10,6 +10,7 @@ from app.identity.router import router as identity_router
 from app.tenancy.router import router as tenancy_router
 from app.knowledge.router import router as knowledge_router
 from app.rag.router import router as rag_router
+from app.widget.router import router as widget_router
 
 def create_app() -> FastAPI:
     """Create the application without importing domain implementations."""
@@ -21,6 +22,7 @@ def create_app() -> FastAPI:
     application.include_router(tenancy_router)
     application.include_router(knowledge_router)
     application.include_router(rag_router)
+    application.include_router(widget_router)
     @application.get("/health", tags=["Health"])
     async def health_check() -> dict[str, str]:
         return {"status": "ok"}
