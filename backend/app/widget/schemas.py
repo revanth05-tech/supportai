@@ -38,3 +38,11 @@ class WidgetConversationResponse(BaseModel):
     conversation_id: UUID
     status: str
     messages: list[WidgetMessageResponse]
+    
+class WidgetMessageCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message: str = Field(
+        min_length=1,
+        max_length=1000,
+    )
