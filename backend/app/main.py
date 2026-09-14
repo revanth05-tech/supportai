@@ -12,6 +12,7 @@ from app.knowledge.router import router as knowledge_router
 from app.rag.router import router as rag_router
 from app.widget.router import router as widget_router
 from app.leads.router import router as leads_router
+from app.dashboard.router import router as dashboard_router
 
 def create_app() -> FastAPI:
     """Create the application without importing domain implementations."""
@@ -25,6 +26,7 @@ def create_app() -> FastAPI:
     application.include_router(rag_router)
     application.include_router(widget_router)
     application.include_router(leads_router)
+    application.include_router(dashboard_router)
     @application.get("/health", tags=["Health"])
     async def health_check() -> dict[str, str]:
         return {"status": "ok"}
