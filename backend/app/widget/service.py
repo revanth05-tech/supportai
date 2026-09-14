@@ -101,3 +101,49 @@ async def create_widget_user_message(
     await session.refresh(message)
 
     return message
+async def create_widget_assistant_message(
+    session: AsyncSession,
+    *,
+    conversation: Conversation,
+    content: str,
+) -> Message:
+    """Persist the completed assistant response for a widget conversation."""
+
+    message = Message(
+        conversation_id=conversation.id,
+        tenant_id=conversation.tenant_id,
+        role=MessageRole.ASSISTANT,
+        content=content,
+    )
+
+    session.add(message)
+
+    conversation.last_message_at = datetime.now(timezone.utc)
+
+    await session.commit()
+    await session.refresh(message)
+
+    return message
+async def create_widget_assistant_message(
+    session: AsyncSession,
+    *,
+    conversation: Conversation,
+    content: str,
+) -> Message:
+    """Persist the completed assistant response for a widget conversation."""
+
+    message = Message(
+        conversation_id=conversation.id,
+        tenant_id=conversation.tenant_id,
+        role=MessageRole.ASSISTANT,
+        content=content,
+    )
+
+    session.add(message)
+
+    conversation.last_message_at = datetime.now(timezone.utc)
+
+    await session.commit()
+    await session.refresh(message)
+
+    return message

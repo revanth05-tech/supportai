@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.dependencies import get_db
-from app.core.sse import stream_sse_events
+from app.core.sse import encode_sse
 from app.rag.dependencies import get_rag_service
 from app.rag.service import RagService
 from app.tenancy.models import Tenant
@@ -19,6 +19,7 @@ from app.widget.schemas import (
     WidgetSessionResponse,
 )
 from app.widget.service import (
+    create_widget_assistant_message,
     create_widget_session,
     create_widget_user_message,
     get_widget_conversation,
@@ -154,7 +155,7 @@ async def send_message(
         }
     )
 
-    # 5. Resolve the tenant's agent configuration.
+    # 5. Resolve tenant agent configuration.
     agent_config = tenant.agent_config or {}
 
     business_name = agent_config.get(
@@ -178,7 +179,7 @@ async def send_message(
     )
 
     # 6. Run the existing RAG pipeline.
-    events = rag_service.stream_response(
+    rag_events = rag_service.stream_response(
         session=session,
         message=payload.message,
         business_name=business_name,
@@ -188,9 +189,32 @@ async def send_message(
         history=history,
     )
 
-    # 7. Stream the RAG events to the widget.
+    async def stream_and_persist():
+        """Stream RAG events and persist the completed assistant response."""
+
+        assistant_content = ""
+
+        async for event, data in rag_events:
+            if event == "token":
+                token = data.get("content", "")
+                assistant_content += token
+
+            yield encode_sse(
+                data,
+                event=event,
+            )
+
+        # Persist the completed assistant response.
+        if assistant_content:
+            await create_widget_assistant_message(
+                session,
+                conversation=conversation,
+                content=assistant_content,
+            )
+
+    # 7. Return the response as Server-Sent Events.
     return StreamingResponse(
-        stream_sse_events(events),
+        stream_and_persist(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
