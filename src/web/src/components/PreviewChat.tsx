@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { streamPreviewChat, type PreviewHistoryItem } from "@/lib/chat";
 
 interface Meta {
-  wasGrounded: boolean;
+  wasGrounded?: boolean;
   topSimilarity?: number;
   latencyMs?: number;
   titles?: string[];
@@ -171,15 +171,16 @@ function MetaRow({ meta }: { meta: Meta }) {
     meta.topSimilarity != null ? Math.round(meta.topSimilarity * 100) : null;
   return (
     <div className="flex flex-wrap items-center gap-2 px-1 text-xs text-gray-500">
-      {meta.wasGrounded ? (
-        <span className="rounded bg-green-50 px-1.5 py-0.5 text-green-700">
-          grounded
-        </span>
-      ) : (
-        <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700">
-          not grounded
-        </span>
-      )}
+      {meta.wasGrounded != null &&
+        (meta.wasGrounded ? (
+          <span className="rounded bg-green-50 px-1.5 py-0.5 text-green-700">
+            grounded
+          </span>
+        ) : (
+          <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700">
+            not grounded
+          </span>
+        ))}
       {pct != null && <span>confidence {pct}%</span>}
       {meta.latencyMs != null && <span>· {meta.latencyMs} ms</span>}
       {meta.titles && meta.titles.length > 0 && (

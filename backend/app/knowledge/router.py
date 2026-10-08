@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.dependencies import get_current_tenant, get_db
@@ -21,6 +21,45 @@ from app.knowledge.service import (
 from app.tenancy.models import Tenant
 
 
+KNOWLEDGE_TYPES = [
+    {
+        "type": "Faq",
+        "label": "FAQ",
+        "singleton": False,
+        "fields": [
+            {"name": "question", "label": "Question", "kind": "text", "required": True},
+            {"name": "answer", "label": "Answer", "kind": "textarea", "required": True},
+        ],
+    },
+    {
+        "type": "Service",
+        "label": "Service",
+        "singleton": False,
+        "fields": [
+            {"name": "name", "label": "Name", "kind": "text", "required": True},
+            {"name": "description", "label": "Description", "kind": "textarea", "required": True},
+        ],
+    },
+    {
+        "type": "Policy",
+        "label": "Policy",
+        "singleton": False,
+        "fields": [
+            {"name": "title", "label": "Title", "kind": "text", "required": True},
+            {"name": "body", "label": "Policy", "kind": "textarea", "required": True},
+        ],
+    },
+    {
+        "type": "BusinessProfile",
+        "label": "Business profile",
+        "singleton": True,
+        "fields": [
+            {"name": "about", "label": "About your business", "kind": "textarea", "required": True},
+        ],
+    },
+]
+
+
 router = APIRouter(
     prefix="/api/knowledge",
     tags=["Knowledge"],
@@ -32,7 +71,16 @@ def _to_response(item) -> KnowledgeItemResponse:
         id=item.id,
         item_type=item.item_type.value,
         payload=item.payload,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
     )
+
+
+@router.get("/types")
+async def get_knowledge_types() -> list[dict]:
+    """Return the supported item types and fields for the existing UI."""
+
+    return KNOWLEDGE_TYPES
 
 
 @router.get(
@@ -42,8 +90,12 @@ def _to_response(item) -> KnowledgeItemResponse:
 async def get_knowledge_items(
     tenant: Tenant = Depends(get_current_tenant),
     session: AsyncSession = Depends(get_db),
+    item_type: str | None = Query(default=None, alias="type"),
 ) -> list[KnowledgeItemResponse]:
-    items = await list_knowledge(session)
+    try:
+        items = await list_knowledge(session, item_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     return [_to_response(item) for item in items]
 

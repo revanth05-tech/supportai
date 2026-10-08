@@ -28,6 +28,8 @@ class AgentConfigResponse(BaseModel):
     instructions: str
     welcome_message: str
     allowed_origins: list[str]
+    site_key: str
+    embed_snippet: str
 
 
 class AgentConfigUpdate(BaseModel):
@@ -49,6 +51,7 @@ class SiteKeyResponse(BaseModel):
     """Response returned after site-key rotation."""
 
     site_key: str
+    embed_snippet: str
 class LlmCredentialResponse(BaseModel):
     """LLM credential metadata returned without exposing the API key."""
 

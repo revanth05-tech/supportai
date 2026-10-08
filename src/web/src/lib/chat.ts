@@ -1,11 +1,11 @@
-import { apiFetch } from "./api";
+import { apiFetch, getApiErrorMessage } from "./api";
 
 export interface PreviewHistoryItem {
   role: "user" | "assistant";
   content: string;
 }
 export interface DoneEvent {
-  wasGrounded: boolean;
+  wasGrounded?: boolean;
   topSimilarity?: number;
   latencyMs?: number;
   titles?: string[];
@@ -25,12 +25,12 @@ export async function streamPreviewChat(
   history: PreviewHistoryItem[],
   cb: PreviewCallbacks,
 ): Promise<void> {
-  const res = await apiFetch("/api/agent/preview-chat", {
+  const res = await apiFetch("/api/rag/chat", {
     method: "POST",
     body: JSON.stringify({ message, history }),
   });
   if (!res.ok || !res.body) {
-    cb.onError(`Request failed (${res.status})`);
+    cb.onError(await getApiErrorMessage(res, `Request failed (${res.status})`));
     return;
   }
 
@@ -47,6 +47,11 @@ export async function streamPreviewChat(
     while ((idx = buffer.indexOf("\n\n")) !== -1) {
       const raw = buffer.slice(0, idx);
       buffer = buffer.slice(idx + 2);
+      const event = raw
+        .split("\n")
+        .find((line) => line.startsWith("event:"))
+        ?.slice(6)
+        .trim();
       const line = raw.split("\n").find((l) => l.startsWith("data:"));
       if (!line) continue;
       const json = line.slice(5).trim();
@@ -59,15 +64,25 @@ export async function streamPreviewChat(
         continue;
       }
 
-      switch (evt.type) {
+      switch (event ?? evt.type) {
         case "token":
-          cb.onToken(evt.value as string);
+          cb.onToken(evt.content as string);
           break;
         case "handoff":
           cb.onHandoff({ reason: evt.reason as string });
           break;
         case "done":
-          cb.onDone(evt as unknown as DoneEvent);
+          cb.onDone({
+            wasGrounded:
+              typeof evt.wasGrounded === "boolean" ? evt.wasGrounded : undefined,
+            topSimilarity:
+              typeof evt.topSimilarity === "number" ? evt.topSimilarity : undefined,
+            latencyMs:
+              typeof evt.latencyMs === "number" ? evt.latencyMs : undefined,
+            titles: Array.isArray(evt.titles)
+              ? (evt.titles.filter((title) => typeof title === "string") as string[])
+              : undefined,
+          });
           break;
         case "error":
           cb.onError(evt.message as string);

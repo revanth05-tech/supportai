@@ -2,8 +2,9 @@
 
 from fastapi import FastAPI
 
+from fastapi.middleware.cors import CORSMiddleware
 from app.common.middleware import register_middleware
-from app.core.config import settings
+from app.core.config import get_cors_allowed_origins, settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.identity.router import router as identity_router
@@ -19,6 +20,15 @@ def create_app() -> FastAPI:
     configure_logging(settings)
     application = FastAPI(title=settings.app_name, debug=settings.debug)
     register_middleware(application)
+    # Register CORS after application middleware so it wraps every response,
+    # including validation and authentication failures.
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=get_cors_allowed_origins(),
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-Session-Token"],
+    )
     register_exception_handlers(application)
     application.include_router(identity_router)
     application.include_router(tenancy_router)

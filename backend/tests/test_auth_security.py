@@ -27,6 +27,7 @@ from app.identity.jwt_service import (
     create_access_token,
     decode_access_token,
 )
+from app.identity.models import User
 from app.identity.service import hash_refresh_token
 from app.knowledge.models import KnowledgeItem
 from app.main import app
@@ -199,6 +200,7 @@ def test_auth_routes_are_registered_and_me_requires_bearer_token() -> None:
     assert {
         "/api/auth/register",
         "/api/auth/login",
+        "/api/auth/demo-login",
         "/api/auth/refresh",
         "/api/auth/logout",
         "/api/auth/me",
@@ -207,6 +209,71 @@ def test_auth_routes_are_registered_and_me_requires_bearer_token() -> None:
     response = TestClient(app).get("/api/auth/me")
 
     assert response.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_auth_session_contract_and_lifecycle(db_session) -> None:
+    """Registration, refresh, logout, and login use the browser contract."""
+
+    from httpx import ASGITransport, AsyncClient
+
+    email = f"auth-contract-{uuid4()}@example.com"
+    origin = "http://localhost:3000"
+
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            registration = await client.post(
+                "/api/auth/register",
+                headers={"Origin": origin},
+                json={
+                    "email": email,
+                    "password": "password1",
+                    "displayName": "Auth Contract",
+                    "tenantName": "Auth Contract Tenant",
+                },
+            )
+
+            assert registration.status_code == 201
+            assert registration.headers["access-control-allow-origin"] == origin
+            assert registration.headers["access-control-allow-credentials"] == "true"
+            assert {"accessToken", "tokenType", "expiresIn"} <= registration.json().keys()
+            assert "refresh_token=" in registration.headers["set-cookie"]
+            assert "HttpOnly" in registration.headers["set-cookie"]
+
+            me = await client.get(
+                "/api/auth/me",
+                headers={
+                    "Authorization": f"Bearer {registration.json()['accessToken']}",
+                },
+            )
+            assert me.status_code == 200
+            assert {"id", "email", "displayName", "tenantId", "tenantName", "siteKey"} == set(me.json())
+
+            refreshed = await client.post("/api/auth/refresh")
+            assert refreshed.status_code == 200
+            assert isinstance(refreshed.json()["accessToken"], str)
+
+            logout = await client.post("/api/auth/logout")
+            assert logout.status_code == 204
+
+            login = await client.post(
+                "/api/auth/login",
+                json={"email": email, "password": "password1"},
+            )
+            assert login.status_code == 200
+            assert isinstance(login.json()["accessToken"], str)
+    finally:
+        with system_access():
+            user = await db_session.scalar(select(User).where(User.email == email))
+            if user is not None:
+                tenant = await db_session.scalar(
+                    select(Tenant).where(Tenant.owner_user_id == user.id)
+                )
+                if tenant is not None:
+                    await db_session.delete(tenant)
+                await db_session.delete(user)
+                await db_session.commit()
     
 def test_agent_and_llm_routes_are_registered_and_protected() -> None:
     paths = _collect_paths(app.routes)

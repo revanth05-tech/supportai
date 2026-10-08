@@ -69,15 +69,9 @@ export default function ConversationsPage() {
               <span className="font-medium">
                 {new Date(c.startedAt).toLocaleString()}
               </span>
-              <span className="ml-2 text-gray-500">{c.messageCount} msgs</span>
             </button>
             <div className="flex shrink-0 items-center gap-2">
               <StatusPill status={c.status} />
-              {c.hasLead && (
-                <span className="rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">
-                  lead
-                </span>
-              )}
             </div>
           </li>
         ))}

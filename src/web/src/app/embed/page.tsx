@@ -51,25 +51,28 @@ export default function EmbedPage() {
     if (!siteKey) return;
     (async () => {
       try {
-        const cfg = await getJson<{
-          agentName: string;
-          greeting: string;
-          themeColor: string;
-        }>("/api/widget/config", siteKey, hostOrigin);
+        const cfg = {
+          agentName: "Support",
+          greeting: "Hi! How can I help you today?",
+          themeColor: "#4f46e5",
+        };
         setConfig(cfg);
 
         const stored = readSession(siteKey);
         if (stored) {
           session.current = stored;
           try {
-            const hist = await getJson<Turn[]>(
-              `/api/widget/conversations/${stored.conversationId}/messages`,
-              siteKey,
-              hostOrigin,
+            const hist = await getJson<{
+              messages: { role: string; content: string }[];
+            }>(
+              `/api/widget/conversation?site_key=${encodeURIComponent(siteKey)}`,
               stored.sessionToken,
             );
             setMessages(
-              hist.map((m) => ({ role: m.role, content: m.content })),
+              hist.messages.map((m) => ({
+                role: m.role.toLowerCase() === "user" ? "user" : "assistant",
+                content: m.content,
+              })),
             );
           } catch {
             // eslint-disable-next-line react-hooks/immutability
@@ -87,15 +90,16 @@ export default function EmbedPage() {
   }, [siteKey]);
 
   async function startSession(key: string, origin: string, greeting: string) {
-    const res = await fetch(`${API_BASE}/api/widget/conversations`, {
+    const res = await fetch(`${API_BASE}/api/widget/session`, {
       method: "POST",
-      headers: { "X-Site-Key": key, "X-Widget-Origin": origin },
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ site_key: key, origin_url: origin || null }),
     });
     if (!res.ok) throw new Error("start failed");
     const data = await res.json();
     session.current = {
-      conversationId: data.conversationId,
-      sessionToken: data.sessionToken,
+      conversationId: data.conversation_id,
+      sessionToken: data.session_token,
     };
     writeSession(key, session.current);
     if (greeting) setMessages([{ role: "assistant", content: greeting }]);
@@ -128,14 +132,12 @@ export default function EmbedPage() {
 
     try {
       const res = await fetch(
-        `${API_BASE}/api/widget/conversations/${session.current.conversationId}/messages`,
+        `${API_BASE}/api/widget/message?site_key=${encodeURIComponent(siteKey)}`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "X-Site-Key": siteKey,
             "X-Session-Token": session.current.sessionToken,
-            "X-Widget-Origin": hostOrigin,
           },
           body: JSON.stringify({ message: text }),
         },
@@ -157,6 +159,11 @@ export default function EmbedPage() {
         while ((idx = buffer.indexOf("\n\n")) !== -1) {
           const raw = buffer.slice(0, idx);
           buffer = buffer.slice(idx + 2);
+          const event = raw
+            .split("\n")
+            .find((line) => line.startsWith("event:"))
+            ?.slice(6)
+            .trim();
           const line = raw.split("\n").find((l) => l.startsWith("data:"));
           if (!line) continue;
           const json = line.slice(5).trim();
@@ -167,17 +174,17 @@ export default function EmbedPage() {
           } catch {
             continue;
           }
-          if (evt.type === "token") {
+          if (event === "token") {
             patchLast((m) => ({
               ...m,
-              content: m.content + (evt.value as string),
+              content: m.content + (evt.content as string),
             }));
             scrollDown();
-          } else if (evt.type === "handoff") {
+          } else if (event === "handoff") {
             patchLast((m) => ({ ...m, handoff: evt.reason as string }));
             setHandoffActive(true);
             scrollDown();
-          } else if (evt.type === "error") {
+          } else if (event === "error") {
             patchLast((m) => ({ ...m, content: evt.message as string }));
           }
         }
@@ -200,20 +207,18 @@ export default function EmbedPage() {
     setFormError(null);
     try {
       const res = await fetch(
-        `${API_BASE}/api/widget/conversations/${session.current.conversationId}/handoff`,
+        `${API_BASE}/api/widget/contact?site_key=${encodeURIComponent(siteKey)}`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "X-Site-Key": siteKey,
             "X-Session-Token": session.current.sessionToken,
-            "X-Widget-Origin": hostOrigin,
           },
           body: JSON.stringify({
-            name: cName.trim(),
-            email: cEmail.trim(),
-            phone: cPhone.trim() || null,
-            message: cMsg.trim() || null,
+            contact_name: cName.trim(),
+            contact_email: cEmail.trim(),
+            contact_phone: cPhone.trim() || null,
+            visitor_message: cMsg.trim() || null,
           }),
         },
       );
@@ -360,14 +365,9 @@ export default function EmbedPage() {
 
 async function getJson<T>(
   path: string,
-  siteKey: string,
-  origin: string,
   sessionToken?: string,
 ): Promise<T> {
-  const headers: Record<string, string> = {
-    "X-Site-Key": siteKey,
-    "X-Widget-Origin": origin,
-  };
+  const headers: Record<string, string> = {};
   if (sessionToken) headers["X-Session-Token"] = sessionToken;
   const res = await fetch(`${API_BASE}${path}`, { headers });
   if (!res.ok) throw new Error(`${res.status}`);

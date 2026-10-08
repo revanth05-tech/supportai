@@ -7,7 +7,15 @@ from app.common.dependencies import get_current_tenant, get_current_user, get_db
 from app.core.config import settings
 from app.identity.models import User
 from app.identity.schemas import CurrentUserResponse, LoginRequest, RegisterRequest, TokenResponse
-from app.identity.service import AuthenticationError, DuplicateEmailError, login_user, register_user, revoke_refresh_token, rotate_refresh_token
+from app.identity.service import (
+    AuthenticationError,
+    DuplicateEmailError,
+    create_demo_user,
+    login_user,
+    register_user,
+    revoke_refresh_token,
+    rotate_refresh_token,
+)
 from app.tenancy.models import Tenant
 
 
@@ -47,6 +55,15 @@ async def login(payload: LoginRequest, response: Response, session: AsyncSession
     return _token_response(access_token)
 
 
+@router.post("/demo-login", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+async def demo_login(response: Response, session: AsyncSession = Depends(get_db)) -> TokenResponse:
+    """Start an isolated demo session using the normal auth-token flow."""
+
+    _, _, access_token, refresh_token = await create_demo_user(session)
+    _set_refresh_cookie(response, refresh_token)
+    return _token_response(access_token)
+
+
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh(request: Request, response: Response, session: AsyncSession = Depends(get_db)) -> TokenResponse:
     raw_token = request.cookies.get(REFRESH_COOKIE)
@@ -61,14 +78,22 @@ async def refresh(request: Request, response: Response, session: AsyncSession = 
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(request: Request, response: Response, session: AsyncSession = Depends(get_db)) -> Response:
+async def logout(request: Request, session: AsyncSession = Depends(get_db)) -> Response:
     raw_token = request.cookies.get(REFRESH_COOKIE)
     if raw_token:
         await revoke_refresh_token(session, raw_token)
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
     response.delete_cookie(REFRESH_COOKIE, path="/api/auth", httponly=True, secure=settings.environment.lower() == "production")
     return response
 
 
 @router.get("/me", response_model=CurrentUserResponse)
 async def me(user: User = Depends(get_current_user), tenant: Tenant = Depends(get_current_tenant)) -> CurrentUserResponse:
-    return CurrentUserResponse(id=user.id, email=user.email, display_name=user.display_name, tenant_id=tenant.id, tenant_name=tenant.name)
+    return CurrentUserResponse(
+        id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        tenant_id=tenant.id,
+        tenant_name=tenant.name,
+        site_key=tenant.site_key,
+    )

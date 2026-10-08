@@ -57,8 +57,8 @@ async def register_user(
 ) -> tuple[User, Tenant, str, str]:
     """Atomically create the v1 user, their sole tenant, and both token types."""
     normalized_email = email.lower()
-    async with session.begin():
-        with system_access():
+    with system_access():
+        async with session.begin():
             if await session.scalar(select(User.id).where(User.email == normalized_email)) is not None:
                 raise DuplicateEmailError("An account with this email already exists.")
             user = User(id=str(uuid.uuid4()), email=normalized_email, display_name=display_name, password_hash=hash_password(password))
@@ -69,6 +69,45 @@ async def register_user(
             session.add_all([user, tenant])
             raw_refresh, _ = await create_refresh_token(session, user.id)
     access_token = create_access_token(user_id=user.id, email=user.email, tenant_id=str(tenant.id))
+    return user, tenant, access_token, raw_refresh
+
+
+async def create_demo_user(session: AsyncSession) -> tuple[User, Tenant, str, str]:
+    """Create an isolated, non-privileged demo account for the current visitor.
+
+    A demo login never reuses another visitor's tenant.  This preserves the
+    normal JWT and tenant-isolation path while keeping the UI's demo action
+    useful without relying on a checked-in account or password.
+    """
+
+    user_id = str(uuid.uuid4())
+    email = f"demo-{user_id}@example.com"
+
+    with system_access():
+        async with session.begin():
+            user = User(
+                id=user_id,
+                email=email,
+                display_name="Demo User",
+                password_hash=hash_password(secrets.token_urlsafe(32)),
+            )
+            tenant = Tenant(
+                id=uuid.uuid4(),
+                owner_user_id=user.id,
+                name="Demo Workspace",
+                site_key=await _new_site_key(session),
+                allowed_origins=[],
+                agent_config={},
+            )
+            session.add_all([user, tenant])
+            raw_refresh, _ = await create_refresh_token(session, user.id)
+
+    access_token = create_access_token(
+        user_id=user.id,
+        email=user.email,
+        tenant_id=str(tenant.id),
+        is_demo=True,
+    )
     return user, tenant, access_token, raw_refresh
 
 

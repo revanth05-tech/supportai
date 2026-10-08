@@ -16,17 +16,19 @@ class OpenAICompatibleClient(LLMClient):
     """Client for providers exposing the OpenAI chat-completions API."""
 
     def __init__(
-        self,
-        *,
-        api_key: str,
-        base_url: str,
-        model: str,
-        timeout: float = 60.0,
+    self,
+    *,
+    api_key: str,
+    base_url: str,
+    model: str,
+    timeout: float = 60.0,
+    uses_shared_quota: bool = False,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
+        self.uses_shared_quota = uses_shared_quota
 
     async def stream_chat(
         self,

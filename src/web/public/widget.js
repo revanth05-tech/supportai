@@ -15,7 +15,7 @@
   var appBase;
   try {
     appBase = new URL(script.src).origin;
-  } catch (e) {
+  } catch  {
     return;
   }
 

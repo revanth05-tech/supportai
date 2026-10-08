@@ -7,15 +7,31 @@ import {
   useState,
   ReactNode,
 } from "react";
-import { apiFetch, refreshAccessToken, setAccessToken, API_BASE } from "./api";
+
+import {
+  apiFetch,
+  getApiErrorMessage,
+  refreshAccessToken,
+  setAccessToken,
+  API_BASE,
+} from "./api";
 
 type User = {
   email: string;
   displayName: string | null;
 };
+
 type Tenant = {
   id: string;
   name: string;
+  siteKey: string;
+};
+
+type CurrentAccount = {
+  email: string;
+  displayName: string | null;
+  tenantId: string;
+  tenantName: string;
   siteKey: string;
 };
 
@@ -41,35 +57,61 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [loading, setLoading] = useState(true);
 
-  function applyAuth(data: {
-    accessToken: string;
-    user: User;
-    tenant: Tenant;
-  }) {
+  function applyAuth(data: { accessToken: string }) {
     setAccessToken(data.accessToken);
-    setUser(data.user);
-    setTenant(data.tenant);
   }
 
-  // On load, try to restore the session from the refresh cookie.
+  async function getCurrentAccount(): Promise<CurrentAccount> {
+    const me = await apiFetch("/api/auth/me");
+
+    if (!me.ok) {
+      throw new Error("Failed to load account details.");
+    }
+
+    return (await me.json()) as CurrentAccount;
+  }
+
+  function applyCurrentAccount(account: CurrentAccount) {
+    setUser({
+      email: account.email,
+      displayName: account.displayName,
+    });
+
+    setTenant({
+      id: account.tenantId,
+      name: account.tenantName,
+      siteKey: account.siteKey,
+    });
+  }
+
+  async function loadCurrentUser() {
+    applyCurrentAccount(await getCurrentAccount());
+  }
+
   useEffect(() => {
     let cancelled = false;
+
     (async () => {
       const token = await refreshAccessToken();
+
       if (token && !cancelled) {
-        const res = await apiFetch("/api/auth/me");
-        if (res.ok) {
-          const me = await res.json();
-          setUser({ email: me.email, displayName: me.displayName });
-          setTenant({
-            id: me.tenantId,
-            name: me.tenantName,
-            siteKey: me.siteKey,
-          });
+        try {
+          const account = await getCurrentAccount();
+          if (!cancelled) applyCurrentAccount(account);
+        } catch {
+          if (!cancelled) {
+            setAccessToken(null);
+            setUser(null);
+            setTenant(null);
+          }
         }
       }
-      if (!cancelled) setLoading(false);
+
+      if (!cancelled) {
+        setLoading(false);
+      }
     })();
+
     return () => {
       cancelled = true;
     };
@@ -82,11 +124,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
     });
+
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.title ?? "Login failed");
+      throw new Error(await getApiErrorMessage(res, "Login failed"));
     }
-    applyAuth(await res.json());
+
+    const data = await res.json();
+
+    applyAuth(data);
+    await loadCurrentUser();
   }
 
   async function register(
@@ -99,18 +145,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, businessName, displayName }),
+      body: JSON.stringify({
+        email,
+        password,
+        tenantName: businessName,
+        displayName,
+      }),
     });
+
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      const fieldErrors = err.errors
-        ? Object.values(err.errors).flat().join(" ")
-        : null;
-      throw new Error(
-        (fieldErrors as string) || err.title || "Registration failed",
-      );
+      throw new Error(await getApiErrorMessage(res, "Registration failed"));
     }
-    applyAuth(await res.json());
+
+    const data = await res.json();
+
+    applyAuth(data);
+    await loadCurrentUser();
   }
 
   async function demoLogin() {
@@ -118,11 +168,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: "POST",
       credentials: "include",
     });
+
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.title ?? "Demo unavailable");
+      throw new Error(await getApiErrorMessage(res, "Demo unavailable"));
     }
-    applyAuth(await res.json());
+
+    const data = await res.json();
+
+    applyAuth(data);
+    await loadCurrentUser();
   }
 
   async function logout() {
@@ -130,6 +184,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: "POST",
       credentials: "include",
     });
+
     setAccessToken(null);
     setUser(null);
     setTenant(null);
@@ -137,7 +192,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, tenant, loading, login, register, logout, demoLogin }}
+      value={{
+        user,
+        tenant,
+        loading,
+        login,
+        register,
+        logout,
+        demoLogin,
+      }}
     >
       {children}
     </AuthContext.Provider>
@@ -146,6 +209,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
+
+  if (!ctx) {
+    throw new Error("useAuth must be used within AuthProvider");
+  }
+
   return ctx;
 }

@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -17,9 +18,10 @@ class FakeEmbedder(Embedder):
 class FakeLLMClient(LLMClient):
     """Fake streaming LLM client."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, uses_shared_quota: bool = False) -> None:
         self.system_prompt = None
         self.user_message = None
+        self.uses_shared_quota = uses_shared_quota
 
     async def stream_chat(
         self,
@@ -30,7 +32,6 @@ class FakeLLMClient(LLMClient):
     ) -> AsyncIterator[str]:
         self.system_prompt = system_prompt
         self.user_message = user_message
-
         yield "Hello"
         yield " there"
 
@@ -120,9 +121,11 @@ async def test_rag_service_streams_grounded_response(
     ]
 
     assert llm.user_message == "What is your refund policy?"
+
     assert "Our refund policy allows refunds within 30 days." in (
         llm.system_prompt
     )
+
     assert "Keep answers short." in llm.system_prompt
 
 
@@ -170,4 +173,110 @@ async def test_rag_service_detects_explicit_human_request(
         )
     ]
 
+    assert llm.system_prompt is None
+
+
+@pytest.mark.anyio
+async def test_rag_service_consumes_global_quota_for_shared_provider(
+    monkeypatch,
+):
+    class FakeChunk:
+        content = "Our refund policy allows refunds within 30 days."
+        similarity = 0.91
+
+    async def fake_retrieve_chunks(*args, **kwargs):
+        return [FakeChunk()]
+
+    monkeypatch.setattr(
+        "app.rag.service.retrieve_chunks",
+        fake_retrieve_chunks,
+    )
+
+    mock_quota = AsyncMock(return_value=True)
+
+    monkeypatch.setattr(
+        "app.rag.service.consume_global_free_call",
+        mock_quota,
+    )
+
+    llm = FakeLLMClient(uses_shared_quota=True)
+
+    service = RagService(
+        embedder=FakeEmbedder(),
+        llm_client=llm,
+    )
+
+    events = []
+
+    async for event in service.stream_response(
+        session=None,
+        message="What is your refund policy?",
+        business_name="Acme",
+        agent_name="Ava",
+        tone="friendly",
+        instructions="",
+    ):
+        events.append(event)
+
+    assert events == [
+        ("token", {"content": "Hello"}),
+        ("token", {"content": " there"}),
+        ("done", {}),
+    ]
+
+    mock_quota.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_rag_service_hands_off_when_global_quota_is_exhausted(
+    monkeypatch,
+):
+    class FakeChunk:
+        content = "Our refund policy allows refunds within 30 days."
+        similarity = 0.91
+
+    async def fake_retrieve_chunks(*args, **kwargs):
+        return [FakeChunk()]
+
+    monkeypatch.setattr(
+        "app.rag.service.retrieve_chunks",
+        fake_retrieve_chunks,
+    )
+
+    mock_quota = AsyncMock(return_value=False)
+
+    monkeypatch.setattr(
+        "app.rag.service.consume_global_free_call",
+        mock_quota,
+    )
+
+    llm = FakeLLMClient(uses_shared_quota=True)
+
+    service = RagService(
+        embedder=FakeEmbedder(),
+        llm_client=llm,
+    )
+
+    events = []
+
+    async for event in service.stream_response(
+        session=None,
+        message="What is your refund policy?",
+        business_name="Acme",
+        agent_name="Ava",
+        tone="friendly",
+        instructions="",
+    ):
+        events.append(event)
+
+    assert events == [
+        (
+            "handoff",
+            {
+                "reason": "quota_overflow",
+            },
+        )
+    ]
+
+    mock_quota.assert_awaited_once()
     assert llm.system_prompt is None

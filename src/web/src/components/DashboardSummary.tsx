@@ -12,11 +12,11 @@ export default function DashboardSummary() {
   }, []);
   if (!s) return null;
   const cards = [
-    { label: "Conversations", value: s.conversations },
-    { label: "Leads", value: s.leads },
+    { label: "Conversations", value: s.totalConversations },
+    { label: "Active", value: s.activeConversations },
+    { label: "Handed off", value: s.handedOffConversations },
+    { label: "Leads", value: s.totalLeads },
     { label: "New leads", value: s.newLeads },
-    { label: "Knowledge items", value: s.knowledgeItems },
-    { label: "Messages today", value: s.messagesToday },
   ];
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">

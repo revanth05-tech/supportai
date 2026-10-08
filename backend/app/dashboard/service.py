@@ -100,6 +100,21 @@ async def get_dashboard_conversation(
     )
 
 
+async def delete_dashboard_conversation(
+    session: AsyncSession,
+    conversation_id: UUID,
+) -> bool:
+    """Delete one conversation owned by the authenticated tenant only."""
+
+    conversation = await get_dashboard_conversation(session, conversation_id)
+    if conversation is None:
+        return False
+
+    await session.delete(conversation)
+    await session.commit()
+    return True
+
+
 async def get_dashboard_messages(
     session: AsyncSession,
     conversation_id: UUID,

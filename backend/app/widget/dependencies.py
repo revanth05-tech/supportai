@@ -6,6 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.dependencies import get_db
 from app.common.tenant_context import set_authenticated_identity, system_access
+from app.conversations.models import Conversation
+from app.conversations.service import get_conversation_by_token
 from app.tenancy.models import Tenant
 
 
@@ -17,9 +19,9 @@ async def get_widget_tenant(
     """
     Resolve a tenant from the public widget site key.
 
-    Site-key lookup is intentionally performed with system access because
-    there is no authenticated tenant context yet. Once the tenant is resolved,
-    the request receives that tenant's identity and normal tenant isolation
+    Site-key lookup is performed with system access because there is no
+    authenticated tenant context yet. Once the tenant is resolved, the
+    request receives that tenant's identity and normal tenant isolation
     applies to subsequent database operations.
     """
 
@@ -48,3 +50,43 @@ async def get_widget_tenant(
     )
 
     return tenant
+
+
+async def get_widget_conversation_for_tenant(
+    site_key: str,
+    session_token: str = Header(..., alias="X-Session-Token"),
+    origin: str | None = Header(default=None),
+    session: AsyncSession = Depends(get_db),
+) -> tuple[Tenant, Conversation]:
+    """
+    Authenticate an existing widget session against its tenant.
+
+    A session token alone is not sufficient here. The request must also
+    provide a valid tenant site key and allowed origin, and the conversation
+    must belong to that tenant.
+    """
+
+    tenant = await get_widget_tenant(
+        site_key=site_key,
+        origin=origin,
+        session=session,
+    )
+
+    conversation = await get_conversation_by_token(
+        session,
+        token=session_token,
+    )
+
+    if conversation is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired session token.",
+        )
+
+    if conversation.tenant_id != tenant.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Session does not belong to this widget.",
+        )
+
+    return tenant, conversation

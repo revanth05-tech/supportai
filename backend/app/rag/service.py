@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.tenancy.usage import consume_global_free_call
 from app.knowledge.embedder import Embedder
 from app.knowledge.retrieval import retrieve_chunks
 from app.rag.handoff import evaluate_handoff
@@ -84,7 +85,19 @@ class RagService:
             retrieved_chunks=retrieved_context,
         )
 
-        # 6. Ask the LLM for a streamed answer.
+              # 6. Enforce the global quota only for the shared provider.
+        if getattr(self.llm_client, "uses_shared_quota", False):
+            allowed = await consume_global_free_call(
+                session,
+            )
+
+            if not allowed:
+                yield "handoff", {
+                    "reason": "quota_overflow",
+                }
+                return
+
+        # 7. Ask the LLM for a streamed answer.
         async for token in self.llm_client.stream_chat(
             system_prompt=system_prompt,
             user_message=message,
@@ -94,5 +107,5 @@ class RagService:
                 "content": token,
             }
 
-        # 7. Tell the caller generation completed.
+        # 8. Tell the caller generation completed.
         yield "done", {}

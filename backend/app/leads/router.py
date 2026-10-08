@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,12 +23,12 @@ router = APIRouter(
 async def list_leads(
     session: AsyncSession = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
+    status: str | None = Query(default=None),
 ):
-    result = await session.scalars(
-        select(Lead)
-        .where(Lead.tenant_id == tenant.id)
-        .order_by(Lead.created_at.desc())
-    )
+    statement = select(Lead).where(Lead.tenant_id == tenant.id)
+    if status is not None:
+        statement = statement.where(Lead.status == status)
+    result = await session.scalars(statement.order_by(Lead.created_at.desc()))
 
     return list(result.all())
 

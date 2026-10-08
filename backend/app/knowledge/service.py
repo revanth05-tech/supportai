@@ -30,11 +30,18 @@ def _get_embedder() -> OnnxEmbedder:
 
 async def list_knowledge(
     session: AsyncSession,
+    item_type: str | None = None,
 ) -> list[KnowledgeItem]:
     """List knowledge items for the current tenant."""
-    result = await session.scalars(
-        select(KnowledgeItem).order_by(KnowledgeItem.created_at.desc())
-    )
+    statement = select(KnowledgeItem)
+    if item_type is not None:
+        try:
+            statement = statement.where(
+                KnowledgeItem.item_type == KnowledgeItemType(item_type)
+            )
+        except ValueError as exc:
+            raise ValueError("Unsupported knowledge item type.") from exc
+    result = await session.scalars(statement.order_by(KnowledgeItem.created_at.desc()))
 
     return list(result.all())
 

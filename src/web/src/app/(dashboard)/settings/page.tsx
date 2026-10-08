@@ -375,7 +375,7 @@ export default function SettingsPage() {
         </h2>
         <p className="text-sm text-gray-500">
           {cred?.configured
-            ? `Currently using your ${cred.provider} key (${cred.maskedKey}).`
+            ? `Currently using your ${cred.provider} key.`
             : "Currently using the shared free key. Add your own to route answers through your provider."}
         </p>
         <div className="flex gap-4">

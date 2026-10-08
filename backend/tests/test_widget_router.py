@@ -5,12 +5,14 @@ from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI, HTTPException
+from starlette.requests import Request
 
 from app.conversations.models import (
     ConversationStatus,
     Message,
     MessageRole,
 )
+
 from app.leads.models import LeadReason
 from app.widget.dependencies import get_widget_tenant
 from app.widget.router import router, send_message
@@ -22,6 +24,19 @@ widget_test_app = FastAPI()
 widget_test_app.include_router(router)
 
 
+def make_request(client_host: str = "127.0.0.1") -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/widget/message",
+            "headers": [],
+            "client": (client_host, 50000),
+            "server": ("testserver", 80),
+            "scheme": "http",
+        }
+    )
+    
 def test_widget_session_route_is_registered():
     routes = [
         (route.path, route.methods)
@@ -157,6 +172,86 @@ async def test_get_widget_tenant_rejects_disallowed_origin():
     assert exc_info.value.detail == "Origin is not allowed."
 
 
+@pytest.mark.anyio
+async def test_get_widget_conversation_for_tenant_rejects_invalid_session():
+    fake_session = AsyncMock()
+
+    with patch(
+        "app.widget.dependencies.get_widget_tenant",
+        new=AsyncMock(
+            return_value=type(
+                "FakeTenant",
+                (),
+                {
+                    "id": uuid4(),
+                    "owner_user_id": uuid4(),
+                },
+            )()
+        ),
+    ), patch(
+        "app.widget.dependencies.get_conversation_by_token",
+        new=AsyncMock(return_value=None),
+    ):
+        from app.widget.dependencies import get_widget_conversation_for_tenant
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_widget_conversation_for_tenant(
+                site_key="public-site-key",
+                session_token="invalid-token",
+                origin="https://example.com",
+                session=fake_session,
+            )
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Invalid or expired session token."
+
+
+@pytest.mark.anyio
+async def test_get_widget_conversation_for_tenant_rejects_cross_tenant_session():
+    tenant_id = uuid4()
+    other_tenant_id = uuid4()
+
+    fake_tenant = type(
+        "FakeTenant",
+        (),
+        {
+            "id": tenant_id,
+            "owner_user_id": uuid4(),
+        },
+    )()
+
+    conversation = type(
+        "FakeConversation",
+        (),
+        {
+            "id": uuid4(),
+            "tenant_id": other_tenant_id,
+        },
+    )()
+
+    fake_session = AsyncMock()
+
+    with patch(
+        "app.widget.dependencies.get_widget_tenant",
+        new=AsyncMock(return_value=fake_tenant),
+    ), patch(
+        "app.widget.dependencies.get_conversation_by_token",
+        new=AsyncMock(return_value=conversation),
+    ):
+        from app.widget.dependencies import get_widget_conversation_for_tenant
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_widget_conversation_for_tenant(
+                site_key="public-site-key",
+                session_token="valid-token",
+                origin="https://example.com",
+                session=fake_session,
+            )
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "Session does not belong to this widget."
+
+
 def test_widget_message_route_is_registered():
     routes = [
         (route.path, route.methods)
@@ -176,17 +271,21 @@ async def test_send_message_rejects_invalid_session():
     )
 
     with patch(
-        "app.widget.router.get_widget_conversation",
+        "app.widget.router.get_widget_conversation_for_tenant",
         new=AsyncMock(
-            side_effect=ValueError(
-                "Invalid or expired session token."
+            side_effect=HTTPException(
+                status_code=401,
+                detail="Invalid or expired session token.",
             )
         ),
     ):
         with pytest.raises(HTTPException) as exc_info:
             await send_message(
                 payload=payload,
+                site_key="public-site-key",
+                request=make_request(),
                 session_token="invalid-token",
+                origin="https://example.com",
                 session=fake_session,
                 rag_service=AsyncMock(),
             )
@@ -211,6 +310,7 @@ async def test_send_message_streams_rag_response_and_persists_assistant():
         Message(
             id=uuid4(),
             conversation_id=conversation.id,
+            tenant_id=conversation.tenant_id,
             role=MessageRole.USER,
             content="Hello",
         ),
@@ -259,29 +359,32 @@ async def test_send_message_streams_rag_response_and_persists_assistant():
     )
 
     with patch(
-        "app.widget.router.get_widget_conversation",
+        "app.widget.router.get_widget_conversation_for_tenant",
         new=AsyncMock(
-            return_value=(conversation, existing_messages),
+            return_value=(fake_tenant, conversation),
         ),
+    ), patch(
+        "app.widget.router.get_messages",
+        new=AsyncMock(return_value=existing_messages),
+    ), patch(
+    "app.widget.router.consume_tenant_message",
+    new=AsyncMock(return_value=True),
     ), patch(
         "app.widget.router.create_widget_user_message",
         new=AsyncMock(return_value=user_message),
     ) as mock_user_message, patch(
         "app.widget.router.create_widget_assistant_message",
         new=AsyncMock(return_value=assistant_message),
-    ) as mock_assistant_message, patch(
-        "app.widget.router.select",
-    ) as mock_select:
-
-        fake_session.scalar = AsyncMock(
-            return_value=fake_tenant,
-        )
+    ) as mock_assistant_message:
 
         result = await send_message(
             payload=WidgetMessageCreate(
                 message="How can you help?",
             ),
+            site_key="public-site-key",
+            request=make_request(),
             session_token="valid-session-token",
+            origin="https://example.com",
             session=fake_session,
             rag_service=rag_service,
         )
@@ -309,8 +412,6 @@ async def test_send_message_streams_rag_response_and_persists_assistant():
         conversation=conversation,
         content="Hello there!",
     )
-
-    mock_select.assert_called_once()
 
 
 @pytest.mark.anyio
@@ -370,10 +471,16 @@ async def test_send_message_handoff_creates_lead_and_notifies_owner():
     )()
 
     with patch(
-        "app.widget.router.get_widget_conversation",
+        "app.widget.router.get_widget_conversation_for_tenant",
         new=AsyncMock(
-            return_value=(conversation, existing_messages),
+            return_value=(fake_tenant, conversation),
         ),
+    ), patch(
+    "app.widget.router.consume_tenant_message",
+    new=AsyncMock(return_value=True),
+    ), patch(
+        "app.widget.router.get_messages",
+        new=AsyncMock(return_value=existing_messages),
     ), patch(
         "app.widget.router.create_widget_user_message",
         new=AsyncMock(return_value=user_message),
@@ -383,19 +490,16 @@ async def test_send_message_handoff_creates_lead_and_notifies_owner():
     ) as mock_create_lead, patch(
         "app.widget.router.notify_lead_owner",
         new=AsyncMock(return_value=True),
-    ) as mock_notify, patch(
-        "app.widget.router.select",
-    ) as mock_select:
-
-        fake_session.scalar = AsyncMock(
-            return_value=fake_tenant,
-        )
+    ) as mock_notify:
 
         result = await send_message(
             payload=WidgetMessageCreate(
                 message="I want to speak to a human.",
             ),
+            site_key="public-site-key",
+            request=make_request(),
             session_token="valid-session-token",
+            origin="https://example.com",
             session=fake_session,
             rag_service=rag_service,
         )
@@ -430,4 +534,48 @@ async def test_send_message_handoff_creates_lead_and_notifies_owner():
     assert "handoff" in body
     assert str(fake_lead.id) in body
 
-    mock_select.assert_called_once()
+
+@pytest.mark.anyio
+async def test_get_widget_conversation_for_tenant_accepts_matching_tenant_session():
+    tenant_id = uuid4()
+
+    fake_tenant = type(
+        "FakeTenant",
+        (),
+        {
+            "id": tenant_id,
+            "owner_user_id": uuid4(),
+        },
+    )()
+
+    conversation = type(
+        "FakeConversation",
+        (),
+        {
+            "id": uuid4(),
+            "tenant_id": tenant_id,
+        },
+    )()
+
+    fake_session = AsyncMock()
+
+    with patch(
+        "app.widget.dependencies.get_widget_tenant",
+        new=AsyncMock(return_value=fake_tenant),
+    ), patch(
+        "app.widget.dependencies.get_conversation_by_token",
+        new=AsyncMock(return_value=conversation),
+    ):
+        from app.widget.dependencies import get_widget_conversation_for_tenant
+
+        result_tenant, result_conversation = (
+            await get_widget_conversation_for_tenant(
+                site_key="public-site-key",
+                session_token="valid-token",
+                origin="https://example.com",
+                session=fake_session,
+            )
+        )
+
+    assert result_tenant is fake_tenant
+    assert result_conversation is conversation

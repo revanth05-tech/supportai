@@ -1,22 +1,31 @@
 """Public API routes for the support widget."""
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.leads.schemas import LeadContactUpdate, LeadResponse
-from app.leads.service import get_lead, update_lead_contact
-
+from app.tenancy.usage import consume_tenant_message
 from app.common.dependencies import get_db
 from app.conversations.models import ConversationStatus
+from app.conversations.service import get_messages
+from app.core.rate_limit import widget_rate_limiter
 from app.core.sse import encode_sse
 from app.leads.models import LeadReason
-from app.leads.service import create_lead
+from app.leads.schemas import LeadContactUpdate, LeadResponse
+from app.leads.service import (
+    create_lead,
+    get_lead_by_conversation,
+    notify_lead_owner,
+    update_lead_contact,
+)
 from app.rag.dependencies import get_rag_service
 from app.rag.service import RagService
 from app.tenancy.models import Tenant
-from app.widget.dependencies import get_widget_tenant
+from app.widget.dependencies import (
+    get_widget_conversation_for_tenant,
+    get_widget_tenant,
+)
 from app.widget.schemas import (
     WidgetConversationResponse,
     WidgetMessageCreate,
@@ -28,34 +37,27 @@ from app.widget.service import (
     create_widget_assistant_message,
     create_widget_session,
     create_widget_user_message,
-    get_widget_conversation,
 )
-
-from app.leads.service import (
-    get_lead_by_conversation,
-    update_lead_contact,
-)
-
-from app.leads.service import (
-    create_lead,
-    notify_lead_owner,
-)
-
 router = APIRouter(prefix="/api/widget", tags=["Widget"])
 
 
 @router.post("/session", response_model=WidgetSessionResponse)
 async def create_session(
     payload: WidgetSessionCreate,
-    tenant: Tenant = Depends(get_widget_tenant),
+    origin: str | None = Header(default=None),
     session: AsyncSession = Depends(get_db),
 ):
+    tenant = await get_widget_tenant(
+        site_key=payload.site_key,
+        origin=origin,
+        session=session,
+    )
+
     conversation, session_token, welcome_message = await create_widget_session(
         session,
         tenant,
         origin_url=payload.origin_url,
     )
-
     return WidgetSessionResponse(
         conversation_id=conversation.id,
         session_token=session_token,
@@ -66,16 +68,22 @@ async def create_session(
 
 @router.get("/conversation", response_model=WidgetConversationResponse)
 async def get_conversation_history(
+    site_key: str,
     session_token: str = Header(..., alias="X-Session-Token"),
+    origin: str | None = Header(default=None),
     session: AsyncSession = Depends(get_db),
 ):
-    try:
-        conversation, messages = await get_widget_conversation(
-            session,
-            session_token=session_token,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    tenant, conversation = await get_widget_conversation_for_tenant(
+        site_key=site_key,
+        session_token=session_token,
+        origin=origin,
+        session=session,
+    )
+
+    messages = await get_messages(
+        session,
+        conversation.id,
+    )
 
     return WidgetConversationResponse(
         conversation_id=conversation.id,
@@ -95,33 +103,54 @@ async def get_conversation_history(
 @router.post("/message")
 async def send_message(
     payload: WidgetMessageCreate,
+    site_key: str,
+    request: Request,
     session_token: str = Header(..., alias="X-Session-Token"),
+    origin: str | None = Header(default=None),
     session: AsyncSession = Depends(get_db),
     rag_service: RagService = Depends(get_rag_service),
 ):
-    try:
-        conversation, messages = await get_widget_conversation(
-            session,
-            session_token=session_token,
+    client_ip = request.client.host if request.client else "unknown"
+    rate_limit_key = f"{site_key}:{client_ip}"
+
+    if not widget_rate_limiter.allow(rate_limit_key):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Please try again later.",
+            headers={"Retry-After": "60"},
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    tenant, conversation = await get_widget_conversation_for_tenant(
+        site_key=site_key,
+        session_token=session_token,
+        origin=origin,
+        session=session,
+    )
 
     if conversation.status != ConversationStatus.ACTIVE:
+        from fastapi import HTTPException
+
         raise HTTPException(
             status_code=409,
             detail="This conversation has already been handed off.",
+    
         )
-
-    tenant = await session.scalar(
-        select(Tenant).where(Tenant.id == conversation.tenant_id)
+    quota_available = await consume_tenant_message(
+        session,
+        tenant_id=tenant.id,
     )
 
-    if tenant is None:
+    if not quota_available:
         raise HTTPException(
-            status_code=401,
-            detail="Conversation tenant not found.",
+            status_code=429,
+            detail="Daily message limit reached. Please contact the support team.",
+            headers={"Retry-After": "3600"},
         )
+
+    messages = await get_messages(
+        session,
+        conversation.id,
+    )
 
     await create_widget_user_message(
         session,
@@ -183,7 +212,6 @@ async def send_message(
                 assistant_content += token
 
             elif event == "handoff":
-                
                 reason_text = data.get(
                     "reason",
                     "Support handoff required.",
@@ -191,6 +219,8 @@ async def send_message(
 
                 if reason_text == "Explicit human request":
                     lead_reason = LeadReason.EXPLICIT
+                elif reason_text == "quota_overflow":
+                    lead_reason = LeadReason.QUOTA_OVERFLOW
                 else:
                     lead_reason = LeadReason.NO_GROUNDING
 
@@ -201,6 +231,7 @@ async def send_message(
                     stumping_question=payload.message,
                     visitor_message=payload.message,
                 )
+
                 await notify_lead_owner(
                     session,
                     lead=lead,
@@ -239,22 +270,21 @@ async def send_message(
         },
     )
 
+
 @router.patch("/contact", response_model=LeadResponse)
 async def submit_contact(
     payload: LeadContactUpdate,
+    site_key: str,
     session_token: str = Header(..., alias="X-Session-Token"),
+    origin: str | None = Header(default=None),
     session: AsyncSession = Depends(get_db),
 ):
-    try:
-        conversation, _ = await get_widget_conversation(
-            session,
-            session_token=session_token,
-        )
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=401,
-            detail=str(exc),
-        ) from exc
+    _, conversation = await get_widget_conversation_for_tenant(
+        site_key=site_key,
+        session_token=session_token,
+        origin=origin,
+        session=session,
+    )
 
     lead = await get_lead_by_conversation(
         session,
@@ -262,6 +292,8 @@ async def submit_contact(
     )
 
     if lead is None:
+        from fastapi import HTTPException
+
         raise HTTPException(
             status_code=404,
             detail="Lead not found.",

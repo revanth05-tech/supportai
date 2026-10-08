@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends,HTTPException,status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.dependencies import get_current_tenant, get_db
+from app.core.config import settings
 from app.tenancy.models import Tenant
 from app.tenancy.schemas import (
     AgentConfigResponse,
@@ -24,12 +25,15 @@ from app.tenancy.service import (
 router = APIRouter(prefix="/api/agent", tags=["Agent"])
 
 
-@router.get("", response_model=AgentConfigResponse)
-async def get_agent(
-    tenant: Tenant = Depends(get_current_tenant),
-) -> AgentConfigResponse:
-    config = get_agent_config(tenant)
+def _embed_snippet(site_key: str) -> str:
+    return (
+        f'<script src="{settings.frontend_url}/widget.js" '
+        f'data-site-key="{site_key}"></script>'
+    )
 
+
+def _agent_response(tenant: Tenant) -> AgentConfigResponse:
+    config = get_agent_config(tenant)
     return AgentConfigResponse(
         tenant_id=tenant.id,
         business_name=config["business_name"],
@@ -37,7 +41,16 @@ async def get_agent(
         instructions=config["instructions"],
         welcome_message=config["welcome_message"],
         allowed_origins=tenant.allowed_origins,
+        site_key=tenant.site_key,
+        embed_snippet=_embed_snippet(tenant.site_key),
     )
+
+
+@router.get("", response_model=AgentConfigResponse)
+async def get_agent(
+    tenant: Tenant = Depends(get_current_tenant),
+) -> AgentConfigResponse:
+    return _agent_response(tenant)
 
 
 @router.put("", response_model=AgentConfigResponse)
@@ -47,16 +60,7 @@ async def update_agent(
     session: AsyncSession = Depends(get_db),
 ) -> AgentConfigResponse:
     tenant = await update_agent_config(session, tenant, payload)
-    config = get_agent_config(tenant)
-
-    return AgentConfigResponse(
-        tenant_id=tenant.id,
-        business_name=config["business_name"],
-        tone=config["tone"],
-        instructions=config["instructions"],
-        welcome_message=config["welcome_message"],
-        allowed_origins=tenant.allowed_origins,
-    )
+    return _agent_response(tenant)
 
 
 @router.post("/rotate-site-key", response_model=SiteKeyResponse)
@@ -66,7 +70,10 @@ async def rotate_agent_site_key(
 ) -> SiteKeyResponse:
     site_key = await rotate_site_key(session, tenant)
 
-    return SiteKeyResponse(site_key=site_key)
+    return SiteKeyResponse(
+        site_key=site_key,
+        embed_snippet=_embed_snippet(site_key),
+    )
 
 @router.get("/llm", response_model=LlmCredentialResponse)
 async def get_llm(

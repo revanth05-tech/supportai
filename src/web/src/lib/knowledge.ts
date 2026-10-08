@@ -1,4 +1,4 @@
-import { apiFetch } from "./api";
+import { apiFetch, getApiErrorMessage } from "./api";
 
 export type KnowledgeItemType =
   | "Faq"
@@ -28,24 +28,38 @@ export interface KnowledgeItem {
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    const fieldErrors = err.errors
-      ? Object.values(err.errors).flat().join(" ")
-      : null;
-    throw new Error(
-      (fieldErrors as string) || err.title || `Request failed (${res.status})`,
-    );
+    throw new Error(await getApiErrorMessage(res, `Request failed (${res.status})`));
   }
   return res.json();
+}
+
+type KnowledgeItemResponse = {
+  id: string;
+  item_type: KnowledgeItemType;
+  payload: Record<string, unknown>;
+  created_at: string;
+  updated_at: string | null;
+};
+
+function itemFromApi(item: KnowledgeItemResponse): KnowledgeItem {
+  return {
+    id: item.id,
+    itemType: item.item_type,
+    payload: item.payload,
+    createdAt: item.created_at,
+    updatedAt: item.updated_at,
+  };
 }
 
 export const getTypes = () =>
   apiFetch("/api/knowledge/types").then(json<KnowledgeTypeDescriptor[]>);
 
-export const listKnowledge = (type?: KnowledgeItemType) =>
-  apiFetch(`/api/knowledge${type ? `?type=${type}` : ""}`).then(
-    json<KnowledgeItem[]>,
+export const listKnowledge = async (type?: KnowledgeItemType) => {
+  const data = await apiFetch(`/api/knowledge${type ? `?type=${type}` : ""}`).then(
+    json<KnowledgeItemResponse[]>,
   );
+  return data.map(itemFromApi);
+};
 
 export const createKnowledge = (
   itemType: KnowledgeItemType,
@@ -53,8 +67,8 @@ export const createKnowledge = (
 ) =>
   apiFetch("/api/knowledge", {
     method: "POST",
-    body: JSON.stringify({ itemType, payload }),
-  }).then(json<KnowledgeItem>);
+    body: JSON.stringify({ item_type: itemType, payload }),
+  }).then(json<KnowledgeItemResponse>).then(itemFromApi);
 
 export const updateKnowledge = (
   id: string,
@@ -63,8 +77,8 @@ export const updateKnowledge = (
 ) =>
   apiFetch(`/api/knowledge/${id}`, {
     method: "PUT",
-    body: JSON.stringify({ itemType, payload }),
-  }).then(json<KnowledgeItem>);
+    body: JSON.stringify({ item_type: itemType, payload }),
+  }).then(json<KnowledgeItemResponse>).then(itemFromApi);
 
 export const deleteKnowledge = (id: string) =>
   apiFetch(`/api/knowledge/${id}`, { method: "DELETE" });

@@ -13,6 +13,7 @@ from app.dashboard.schemas import (
     DashboardSummaryResponse,
 )
 from app.dashboard.service import (
+    delete_dashboard_conversation,
     get_dashboard_conversation,
     get_dashboard_messages,
     get_dashboard_summary,
@@ -85,3 +86,15 @@ async def dashboard_conversation_detail(
             for message in messages
         ],
     )
+
+
+@router.delete("/conversations/{conversation_id}", status_code=204)
+async def delete_dashboard_conversation_route(
+    conversation_id: UUID,
+    session: AsyncSession = Depends(get_db),
+    tenant=Depends(get_current_tenant),
+) -> None:
+    """Delete a conversation from the current tenant's dashboard."""
+
+    if not await delete_dashboard_conversation(session, conversation_id):
+        raise HTTPException(status_code=404, detail="Conversation not found.")

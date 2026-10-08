@@ -1,5 +1,6 @@
 """Knowledge base API schemas."""
 
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -29,3 +30,5 @@ class KnowledgeItemResponse(BaseModel):
     id: UUID
     item_type: str
     payload: dict
+    created_at: datetime
+    updated_at: datetime | None
